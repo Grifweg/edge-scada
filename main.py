@@ -3,6 +3,7 @@ Edge SCADA — entry point.
 Starts the engine and watchdog in daemon threads, then serves the Flask UI.
 """
 import logging
+import signal
 import threading
 import time
 
@@ -17,6 +18,16 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s  %(levelname)-8s  [%(name)s]  %(message)s',
 )
+
+# Docker sends SIGTERM on container stop/reboot.  Werkzeug dev server does not
+# handle SIGTERM by default, so Docker falls back to SIGKILL after 10 s.
+# SIGKILL bypasses SO_LINGER and may leave the Moxa in CLOSE_WAIT.
+# Converting SIGTERM → SystemExit lets app.run() return cleanly so daemon
+# threads and their sockets are shut down with the RST linger option intact.
+def _handle_sigterm(*_):
+    raise SystemExit(0)
+
+signal.signal(signal.SIGTERM, _handle_sigterm)
 
 if __name__ == '__main__':
     start_time = time.time()

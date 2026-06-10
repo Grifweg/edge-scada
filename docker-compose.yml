@@ -6,6 +6,7 @@ services:
     image: edge-scada:latest
     container_name: edge-scada
     restart: unless-stopped
+    stop_grace_period: 30s
     network_mode: host        # Pi talks directly on LAN — no NAT, no port mapping needed
     cap_add:
       - NET_RAW               # required for unprivileged ping inside the container
