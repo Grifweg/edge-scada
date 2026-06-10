@@ -685,3 +685,63 @@ main {
 }
 .flash-ok    { color: var(--ok);   border-color: #162816; background: rgba(0,200,83,.06); }
 .flash-error { color: var(--fail); border-color: #2a1212; background: rgba(244,67,54,.06); }
+
+/* ── Silence panel ───────────────────────────────────────────────────────── */
+.silence-panel {
+  border:     1px solid var(--fail);
+  background: rgba(244,67,54,.07);
+  box-shadow: var(--glow-fail);
+  margin:     0 18px 14px;
+  padding:    16px 20px;
+  animation:  border-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes border-pulse {
+  0%, 100% { box-shadow: var(--glow-fail); border-color: var(--fail); }
+  50%       { box-shadow: 0 0 18px rgba(244,67,54,.25); border-color: #b71c1c; }
+}
+
+.silence-panel .panel-title {
+  color:          var(--fail);
+  letter-spacing: 2px;
+  margin-bottom:  10px;
+}
+
+.silence-desc {
+  color:          var(--tx-dim);
+  font-size:      0.72rem;
+  letter-spacing: 1px;
+  margin-bottom:  10px;
+}
+
+.silence-btn {
+  background:     transparent;
+  border:         2px solid var(--fail);
+  color:          var(--fail);
+  font-family:    inherit;
+  font-size:      0.78rem;
+  font-weight:    700;
+  letter-spacing: 2px;
+  padding:        10px 24px;
+  cursor:         pointer;
+  transition:     background .12s, color .12s, box-shadow .12s;
+  width:          100%;
+}
+
+.silence-btn:hover:not(:disabled) {
+  background: rgba(244,67,54,.18);
+  box-shadow: var(--glow-fail);
+}
+
+.silence-btn:disabled {
+  opacity: 0.5;
+  cursor:  not-allowed;
+}
+
+.silenced-text {
+  color:          var(--warn);
+  font-size:      0.76rem;
+  font-weight:    700;
+  letter-spacing: 1.5px;
+  padding:        8px 0;
+}

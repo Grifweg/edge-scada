@@ -80,6 +80,20 @@
 
     </section>
 
+    <!-- ── Silence panel (visible only while alarm is active) ── -->
+    <section class="panel silence-panel hidden" id="silence-panel">
+      <div class="panel-title">ALARM ACTIEF &mdash; LAMP &amp; SIRENE</div>
+      <div id="silence-unacked">
+        <p class="silence-desc">Geen internet gedetecteerd. Klik om lamp en sirene te stoppen.</p>
+        <button class="silence-btn" id="btn-silence" type="button" onclick="silenceAlarm()">
+          &#128266; SILENCEER ALARM
+        </button>
+      </div>
+      <div id="silence-acked" class="hidden">
+        <p class="silenced-text">&#10003; Alarm gesilenceerd &mdash; output uitgeschakeld</p>
+      </div>
+    </section>
+
     <!-- ── Controls row ── -->
     <section class="ctrl-row">
 
@@ -140,6 +154,20 @@
           <div class="cfg-row">
             <label class="cfg-lbl">MOXA OUTPUT CHANNEL</label>
             <div class="ch-seg" id="ch-seg" role="group" aria-label="Channel 0 to 7"></div>
+          </div>
+
+          <div class="cfg-row">
+            <label class="cfg-lbl" for="cfg-pulse-interval">PULS INTERVAL (seconden)</label>
+            <input  class="cfg-inp" id="cfg-pulse-interval" type="number"
+                    min="0.2" max="60" step="0.1" placeholder="1.0"
+                    {% if not current_user.is_engineer %}readonly{% endif %}>
+          </div>
+
+          <div class="cfg-row">
+            <label class="cfg-lbl" for="cfg-pulse-ack-bit">SILENCER PLC BIT ADRES</label>
+            <input  class="cfg-inp" id="cfg-pulse-ack-bit" type="text"
+                    spellcheck="false" placeholder="W100.01"
+                    {% if not current_user.is_engineer %}readonly{% endif %}>
           </div>
 
           {% if current_user.is_engineer %}

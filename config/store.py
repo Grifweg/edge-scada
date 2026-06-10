@@ -25,9 +25,11 @@ _CONFIG_FILE: Path = Path(__file__).parent / 'config.json'
 _DEFAULTS: dict[str, Any] = {
     'plc_ip':          '192.168.1.10',
     'plc_alarm_bit':   'D1200',
-    'moxa_ip':         '192.168.1.20',
-    'moxa_channel':    0,
-    'manual_override': None,
+    'moxa_ip':              '192.168.1.20',
+    'moxa_channel':         0,
+    'manual_override':      None,
+    'moxa_pulse_interval':  1.0,        # seconds per pulse half-period
+    'moxa_pulse_ack_bit':   'W100.01',  # PLC bit: 1 = operator silenced alarm
 }
 
 

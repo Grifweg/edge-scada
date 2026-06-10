@@ -238,7 +238,8 @@ def create_app(
         data = engine.snapshot()
         data['config'] = {
             k: store.get(k)
-            for k in ('plc_ip', 'plc_alarm_bit', 'moxa_ip', 'moxa_channel')
+            for k in ('plc_ip', 'plc_alarm_bit', 'moxa_ip', 'moxa_channel',
+                      'moxa_pulse_interval', 'moxa_pulse_ack_bit')
         }
         if watchdog is not None:
             data['watchdog_ok'] = watchdog.is_ok
@@ -253,7 +254,8 @@ def create_app(
     @engineer_required
     def api_config():
         body    = request.get_json(force=True, silent=True) or {}
-        allowed = {'plc_ip', 'plc_alarm_bit', 'moxa_ip', 'moxa_channel'}
+        allowed = {'plc_ip', 'plc_alarm_bit', 'moxa_ip', 'moxa_channel',
+                   'moxa_pulse_interval', 'moxa_pulse_ack_bit'}
         updates = {k: v for k, v in body.items() if k in allowed}
         if not updates:
             return jsonify({'error': 'no valid fields'}), 400
@@ -261,6 +263,22 @@ def create_app(
         for ip_key in ('plc_ip', 'moxa_ip'):
             if ip_key in updates and not _valid_ip(str(updates[ip_key])):
                 return jsonify({'error': f'invalid {ip_key}'}), 400
+
+        if 'moxa_pulse_interval' in updates:
+            try:
+                v = float(updates['moxa_pulse_interval'])
+                if not 0.2 <= v <= 60:
+                    raise ValueError
+                updates['moxa_pulse_interval'] = v
+            except (ValueError, TypeError):
+                return jsonify({'error': 'moxa_pulse_interval must be 0.2–60 seconds'}), 400
+
+        if 'moxa_pulse_ack_bit' in updates:
+            v = str(updates['moxa_pulse_ack_bit']).strip().upper()
+            import re as _re
+            if not _re.match(r'^[A-Z]+\d+\.\d{1,2}$', v):
+                return jsonify({'error': 'moxa_pulse_ack_bit must be AREA WORD.BIT (e.g. W100.01)'}), 400
+            updates['moxa_pulse_ack_bit'] = v
 
         if 'moxa_channel' in updates:
             try:
@@ -289,6 +307,23 @@ def create_app(
         old = store.get('manual_override')
         store.update({'manual_override': val})
         _audit.log(current_user.username, 'OVERRIDE_CHANGED', old, val)
+        engine.sync()
+        return jsonify({'ok': True})
+
+    @app.route('/api/silence-alarm', methods=['POST'])
+    @login_required
+    def api_silence_alarm():
+        """Write 1 to the configured PLC ack bit — operator silences the alarm."""
+        from core.plc import FINSClient, FINSError
+        ack_bit  = store.get('moxa_pulse_ack_bit', '')
+        plc_ip   = store.get('plc_ip', '')
+        if not ack_bit or not plc_ip:
+            return jsonify({'error': 'moxa_pulse_ack_bit or plc_ip not configured'}), 400
+        try:
+            FINSClient(plc_ip, timeout=2.0).write_bit(ack_bit, True)
+        except FINSError as exc:
+            return jsonify({'error': str(exc)}), 502
+        _audit.log(current_user.username, 'ALARM_SILENCED', None, ack_bit)
         engine.sync()
         return jsonify({'ok': True})
 

@@ -168,6 +168,20 @@ class FINSClient:
 
     # ── Public ───────────────────────────────────────────────────────────────
 
+    def read_bit(self, addr: str) -> bool:
+        """Read one bit.  addr format: 'AREA WORD.BIT', e.g. 'W100.01'."""
+        a = _parse_bit(addr)
+        cmd = bytes([
+            _MRC_READ, _SRC_READ,
+            a.area.bit_code,
+            (a.word >> 8) & 0xFF,
+            a.word        & 0xFF,
+            a.bit,
+            0x00, 0x01,
+        ])
+        data = self._transact(cmd)
+        return bool(data[0]) if data else False
+
     def write_bit(self, addr: str, value: bool) -> None:
         """Write one bit.  addr format: 'AREA WORD.BIT', e.g. 'W100.00'."""
         a = _parse_bit(addr)
@@ -233,6 +247,7 @@ class FINSClient:
 
             fins_resp = self._recv_exact(sock, length - 8)
             self._validate(fins_resp, sid)
+            return fins_resp[14:]   # response data (empty for writes, ≥1 byte for reads)
 
         except socket.timeout:
             raise FINSTimeoutError(

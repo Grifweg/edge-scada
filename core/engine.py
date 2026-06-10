@@ -125,13 +125,138 @@ class _InternetFSM:
 @dataclasses.dataclass(slots=True)
 class Status:
     """Immutable view produced by Engine.snapshot() for the API layer."""
-    inet_state   : str        = _InetState.OK.value
-    fail_count   : int        = 0
-    alarm_active : bool       = False
-    override     : bool | None = None
-    plc_ok       : bool | None = None
-    moxa_ok      : bool | None = None
-    last_event_ts: str | None  = None
+    inet_state    : str        = _InetState.OK.value
+    fail_count    : int        = 0
+    alarm_active  : bool       = False
+    alarm_silenced: bool       = False
+    override      : bool | None = None
+    plc_ok        : bool | None = None
+    moxa_ok       : bool | None = None
+    last_event_ts : str | None  = None
+
+
+# ── Moxa pulse thread ─────────────────────────────────────────────────────────
+
+class _MoxaPulser:
+    """
+    Daemon thread that drives the Moxa digital output.
+
+    When the alarm is active, the output pulses at the configured interval.
+    When the operator presses Silence, the SCADA writes 1 to the configured
+    PLC bit; the pulser reads that bit and immediately sets the output OFF.
+    When the alarm clears, the pulser resets the PLC bit to 0 so the next
+    alarm starts fresh.
+    """
+
+    def __init__(self) -> None:
+        self._alarm   : bool             = False
+        self._cfg     : dict             = {}
+        self._lock    : threading.Lock   = threading.Lock()
+        self._wakeup  : threading.Event  = threading.Event()
+        self._moxa    : MoxaClient | None = None
+        self._ok      : bool | None      = None   # last Moxa write result
+        self._silenced: bool             = False   # True while ack bit is set
+        threading.Thread(
+            target=self._run, name='moxa-pulser', daemon=True,
+        ).start()
+
+    def update(self, alarm: bool, cfg: dict) -> None:
+        """Called by the engine on every output cycle."""
+        with self._lock:
+            self._alarm = alarm
+            self._cfg   = cfg
+        self._wakeup.set()
+
+    @property
+    def ok(self) -> bool | None:
+        return self._ok
+
+    @property
+    def silenced(self) -> bool:
+        return self._silenced
+
+    # ── thread body ──────────────────────────────────────────────────────────
+
+    def _run(self) -> None:
+        phase       = True   # current pulse phase: True=ON, False=OFF
+        prev_alarm  = False
+
+        while True:
+            with self._lock:
+                alarm = self._alarm
+                cfg   = dict(self._cfg)
+
+            if not cfg:
+                self._wakeup.wait()
+                self._wakeup.clear()
+                continue
+
+            interval = max(0.2, float(cfg.get('moxa_pulse_interval', 1.0)))
+            ack_bit  = cfg.get('moxa_pulse_ack_bit', '')
+
+            if not alarm:
+                if prev_alarm:
+                    # Alarm just cleared: reset PLC ack bit and set output OFF
+                    if ack_bit:
+                        self._write_plc(cfg, ack_bit, False)
+                    self._silenced = False
+                    phase = True
+                self._write_moxa(cfg, False)
+                prev_alarm = False
+                self._wakeup.wait()
+                self._wakeup.clear()
+                continue
+
+            # Alarm is active ───────────────────────────────────────────────
+            prev_alarm = True
+            acked = self._read_plc_bit(cfg, ack_bit)
+            self._silenced = acked
+
+            if acked:
+                self._write_moxa(cfg, False)
+                phase = True
+                # Re-check every 5 s in case the operator un-silences via PLC
+                self._wakeup.wait(timeout=5.0)
+            else:
+                self._write_moxa(cfg, phase)
+                phase = not phase
+                self._wakeup.wait(timeout=interval)
+
+            self._wakeup.clear()
+
+    # ── helpers ──────────────────────────────────────────────────────────────
+
+    def _write_moxa(self, cfg: dict, state: bool) -> None:
+        ip = cfg.get('moxa_ip', '')
+        if not ip:
+            return
+        try:
+            if self._moxa is None or self._moxa._ip != ip:
+                if self._moxa is not None:
+                    self._moxa.close()
+                self._moxa = MoxaClient(ip)
+            self._moxa.set_output(cfg.get('moxa_channel', 0), state)
+            self._ok = True
+        except MoxaError as exc:
+            log.error('Moxa: %s', exc)
+            if self._moxa is not None:
+                self._moxa.close()
+                self._moxa = None
+            self._ok = False
+
+    def _write_plc(self, cfg: dict, addr: str, value: bool) -> None:
+        try:
+            FINSClient(cfg['plc_ip'], timeout=0.5).write_bit(addr, value)
+        except FINSError as exc:
+            log.warning('Pulser: PLC write %s failed: %s', addr, exc)
+
+    def _read_plc_bit(self, cfg: dict, addr: str) -> bool:
+        if not addr:
+            return False
+        try:
+            return FINSClient(cfg['plc_ip'], timeout=0.5).read_bit(addr)
+        except FINSError:
+            return False
 
 
 # ── engine ────────────────────────────────────────────────────────────────────
@@ -155,7 +280,7 @@ class Engine:
         self._fsm      : _InternetFSM = _InternetFSM()
         self._alarms   : AlarmManager = AlarmManager()
         self._watchdog                = None   # set via set_watchdog()
-        self._moxa    : MoxaClient | None = None   # persistent; recreated if IP changes
+        self._pulser   : _MoxaPulser  = _MoxaPulser()
 
         self._q    : queue.SimpleQueue[_Msg] = queue.SimpleQueue()
         self._halt : threading.Event         = threading.Event()
@@ -314,24 +439,12 @@ class Engine:
             log.error('PLC: %s', exc)
             plc_ok = False
 
-        try:
-            moxa_ip = cfg['moxa_ip']
-            if self._moxa is None or self._moxa._ip != moxa_ip:
-                if self._moxa is not None:
-                    self._moxa.close()
-                self._moxa = MoxaClient(moxa_ip)
-            self._moxa.set_output(cfg['moxa_channel'], alarm)
-            moxa_ok = True
-        except MoxaError as exc:
-            log.error('Moxa: %s', exc)
-            if self._moxa is not None:
-                self._moxa.close()
-                self._moxa = None
-            moxa_ok = False
+        self._pulser.update(alarm, cfg)
 
         with self._lock:
-            self._st.plc_ok  = plc_ok
-            self._st.moxa_ok = moxa_ok
+            self._st.plc_ok        = plc_ok
+            self._st.moxa_ok       = self._pulser.ok
+            self._st.alarm_silenced = self._pulser.silenced
 
     # ── ping worker ───────────────────────────────────────────────────────────
 

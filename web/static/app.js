@@ -114,12 +114,28 @@ function _renderInetTile(d) {
 }
 
 function _renderAlarmTile(d) {
-  const active = d.alarm_active;
+  const active   = d.alarm_active;
+  const silenced = d.alarm_silenced;
+  let sub = active
+    ? (silenced ? 'GESILENCEERD' : 'PULSEREND — LAMP & SIRENE')
+    : 'OUTPUTS DE-ENERGISED';
   _setTile('alarm',
     active ? 'ACTIVE' : 'CLEAR',
-    active ? 'OUTPUTS ENERGISED' : 'OUTPUTS DE-ENERGISED',
-    active ? 'fail' : 'ok',
-    active, active);
+    sub,
+    active ? (silenced ? 'warn' : 'fail') : 'ok',
+    active && !silenced, active && !silenced);
+
+  // Show / hide silence panel
+  const panel      = document.getElementById('silence-panel');
+  const unacked    = document.getElementById('silence-unacked');
+  const acked      = document.getElementById('silence-acked');
+  if (panel) {
+    panel.classList.toggle('hidden', !active);
+    if (active) {
+      unacked.classList.toggle('hidden',  silenced);
+      acked.classList.toggle('hidden',   !silenced);
+    }
+  }
 }
 
 function _renderHwTile(name, ok, ipSub, protocolSub) {
@@ -221,9 +237,11 @@ function _renderOverride(override) {
 
 function _seedConfigForm(cfg) {
   if (_cfgSeeded || !cfg) return;
-  document.getElementById('cfg-plc-ip').value  = cfg.plc_ip;
-  document.getElementById('cfg-plc-bit').value = cfg.plc_alarm_bit || 'W100.00';
-  document.getElementById('cfg-moxa-ip').value = cfg.moxa_ip;
+  document.getElementById('cfg-plc-ip').value           = cfg.plc_ip;
+  document.getElementById('cfg-plc-bit').value          = cfg.plc_alarm_bit    || 'W100.00';
+  document.getElementById('cfg-moxa-ip').value          = cfg.moxa_ip;
+  document.getElementById('cfg-pulse-interval').value   = cfg.moxa_pulse_interval ?? 1.0;
+  document.getElementById('cfg-pulse-ack-bit').value    = cfg.moxa_pulse_ack_bit   || 'W100.01';
   _selectChannel(cfg.moxa_channel);
   _cfgSeeded = true;
 }
@@ -308,10 +326,12 @@ async function saveConfig(e) {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', 'X-CSRFToken': _csrf },
       body:    JSON.stringify({
-        plc_ip:        document.getElementById('cfg-plc-ip').value.trim(),
-        plc_alarm_bit: document.getElementById('cfg-plc-bit').value.trim(),
-        moxa_ip:       document.getElementById('cfg-moxa-ip').value.trim(),
-        moxa_channel:  _selectedCh,
+        plc_ip:               document.getElementById('cfg-plc-ip').value.trim(),
+        plc_alarm_bit:        document.getElementById('cfg-plc-bit').value.trim(),
+        moxa_ip:              document.getElementById('cfg-moxa-ip').value.trim(),
+        moxa_channel:         _selectedCh,
+        moxa_pulse_interval:  parseFloat(document.getElementById('cfg-pulse-interval').value) || 1.0,
+        moxa_pulse_ack_bit:   document.getElementById('cfg-pulse-ack-bit').value.trim(),
       }),
     });
     if (!r) return;   // 401 — already redirected
@@ -332,6 +352,29 @@ async function saveConfig(e) {
 function _cfgStatus(el, text, cls) {
   el.textContent = text;
   el.className   = 'cfg-msg' + (cls ? ' ' + cls : '');
+}
+
+async function silenceAlarm() {
+  const btn = document.getElementById('btn-silence');
+  if (!btn) return;
+  btn.disabled    = true;
+  btn.textContent = '...';
+  try {
+    const r = await _apiFetch('/api/silence-alarm', {
+      method:  'POST',
+      headers: { 'X-CSRFToken': _csrf },
+    });
+    if (!r) return;
+    if (r.ok) {
+      poll();
+    } else {
+      btn.disabled    = false;
+      btn.textContent = '⚠ FOUT — PROBEER OPNIEUW';
+    }
+  } catch (_) {
+    btn.disabled    = false;
+    btn.textContent = '⚠ FOUT — PROBEER OPNIEUW';
+  }
 }
 
 // ── Utilities ────────────────────────────────────────────────────────────────
