@@ -132,6 +132,15 @@ class MoxaClient:
             with socket.create_connection(
                 (self._ip, _PORT), timeout=self._timeout
             ) as s:
+                # RST on close so the Moxa frees its connection-table slot
+                # immediately.  Without this the Moxa stays in CLOSE_WAIT and
+                # refuses new connections from this IP until an internal
+                # timeout expires (observed behaviour with ioLogik firmware).
+                s.setsockopt(
+                    socket.SOL_SOCKET,
+                    socket.SO_LINGER,
+                    struct.pack('ii', 1, 0),
+                )
                 s.sendall(req)
                 resp = _recvall(s, 12)
         except MoxaError:
