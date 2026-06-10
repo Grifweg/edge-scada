@@ -16,33 +16,43 @@ Modbus coil map  (Function Code 05 — Write Single Coil)
 
   Coil value  0x0000 = de-energise  (False)
   Coil value  0xFF00 = energise     (True)
-  (pymodbus translates Python bool to the correct wire values automatically)
+
+Protocol
+──────────────────
+  Native Modbus TCP — no third-party library.  Each write opens one TCP
+  connection, sends a 12-byte MBAP-framed FC-05 request, reads the 12-byte
+  echo response, then exits the context manager.  Python's socket context
+  manager sends FIN on exit so the Moxa frees the connection slot immediately.
+  No reconnect tasks or library buffers are left open after the call returns.
+
+  Frame layout (12 bytes):
+    MBAP header  TID(2) PID(2=0000) LEN(2=0006) UID(1)
+    PDU          FC(1=05) ADDR(2) VALUE(2)
 
 Error model
 ──────────────────
   All failures raise a MoxaError subclass — never return a sentinel or
-  silently swallow exceptions.  The calling code decides whether to log,
-  retry, or degrade gracefully.  A bounded TCP timeout (default 2 s)
+  silently swallow exceptions.  A bounded TCP timeout (default 2 s)
   guarantees the call returns promptly even when the device is offline.
 """
 
 from __future__ import annotations
 
 import logging
+import socket
+import struct
 from typing import Final
-
-from pymodbus.client import ModbusTcpClient
-from pymodbus.exceptions import ConnectionException, ModbusException
 
 log = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-_PORT          : Final[int]   = 502
-_UNIT_ID       : Final[int]   = 1      # Moxa ioLogik factory default
-_TIMEOUT       : Final[float] = 2.0    # seconds — bounds connect AND receive
-_DO_MIN        : Final[int]   = 0
-_DO_MAX        : Final[int]   = 7
+_PORT    : Final[int]   = 502
+_UNIT_ID : Final[int]   = 1      # Moxa ioLogik factory default
+_TIMEOUT : Final[float] = 2.0    # seconds — bounds connect AND receive
+_DO_MIN  : Final[int]   = 0
+_DO_MAX  : Final[int]   = 7
+_TID     : Final[int]   = 1      # Modbus TCP Transaction ID (fixed; fresh socket per call)
 
 # ── Exceptions ────────────────────────────────────────────────────────────────
 
@@ -54,12 +64,10 @@ class MoxaChannelError(MoxaError):
     Raised before any network I/O — always a configuration error."""
 
 class MoxaConnectionError(MoxaError):
-    """TCP connection to the device could not be established.
-    Indicates the device is offline, unreachable, or refusing connections."""
+    """TCP connection to the device could not be established or was lost."""
 
 class MoxaResponseError(MoxaError):
-    """Device is reachable but returned a Modbus exception response.
-    Indicates a protocol-level refusal (address error, access denied, etc.)."""
+    """Device returned an unexpected or Modbus exception response."""
 
 # ── MoxaClient ────────────────────────────────────────────────────────────────
 
@@ -67,23 +75,20 @@ class MoxaClient:
     """
     Modbus TCP client for one Moxa ioLogik device.
 
-    A new TCP connection is opened and closed on every call.  This is
-    deliberate: Moxa ioLogik devices have a limited connection table, and
-    writes are infrequent (state-change driven), so persistent connections
-    would only add reconnect complexity for no real benefit.
+    Opens a fresh TCP connection for every write, sends the FC-05 frame,
+    reads the echo response, then closes the socket.  The OS sends FIN on
+    socket close, freeing the Moxa's connection slot immediately — no
+    reconnect background tasks are left running.
 
     Args:
-        ip:      Device IP address, e.g. '192.168.1.20'
-        timeout: TCP connect + Modbus response timeout in seconds.
-                 Bounds the worst-case blocking time when the device is
-                 offline.  Default 2.0 s.
+        ip:      Device IP address, e.g. '192.168.1.101'
+        timeout: TCP connect + response timeout in seconds.  Default 2.0 s.
         unit_id: Modbus unit / slave ID.  Moxa factory default is 1.
 
     Raises:
         MoxaChannelError    — channel outside 0–7  (before any I/O)
-        MoxaConnectionError — TCP connect failed
+        MoxaConnectionError — TCP connect or I/O error
         MoxaResponseError   — device returned a Modbus exception
-        MoxaError           — other I/O or protocol error
     """
 
     def __init__(
@@ -106,71 +111,64 @@ class MoxaClient:
         Args:
             channel: DO number, 0–7.
             state:   True = energise (ON), False = de-energise (OFF).
-
-        Raises:
-            MoxaChannelError    — channel outside 0–7
-            MoxaConnectionError — device unreachable
-            MoxaResponseError   — device refused the write
-            MoxaError           — other I/O error
         """
-        self._validate_channel(channel)
-        self._write_coil(channel, state)
-        log.info('Moxa  %-15s  DO%d = %s', self._ip, channel, 'ON' if state else 'OFF')
-
-    # ── Internals ─────────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _validate_channel(channel: int) -> None:
         if not _DO_MIN <= channel <= _DO_MAX:
             raise MoxaChannelError(
                 f'Channel {channel!r} is outside the valid range '
                 f'DO{_DO_MIN}–DO{_DO_MAX}'
             )
+        self._write_coil(channel, state)
+        log.info('Moxa  %-15s  DO%d = %s', self._ip, channel, 'ON' if state else 'OFF')
+
+    # ── Internals ─────────────────────────────────────────────────────────────
 
     def _write_coil(self, channel: int, state: bool) -> None:
-        """Open a TCP connection, write one coil, close the connection."""
-        client = ModbusTcpClient(self._ip, port=_PORT, timeout=self._timeout)
-        try:
-            self._connect(client)
-            self._send(client, channel, state)
-        finally:
-            client.close()
+        value = 0xFF00 if state else 0x0000
+        pdu   = struct.pack('>BHH', 0x05, channel, value)
+        mbap  = struct.pack('>HHHB', _TID, 0x0000, len(pdu) + 1, self._unit_id)
+        req   = mbap + pdu
 
-    def _connect(self, client: ModbusTcpClient) -> None:
-        """Establish the TCP connection or raise MoxaConnectionError."""
         try:
-            connected = client.connect()
-        except (ConnectionException, ModbusException, OSError) as exc:
-            raise MoxaConnectionError(
-                f'Cannot connect to {self._ip}:{_PORT}: {exc}'
-            ) from exc
-        if not connected:
-            raise MoxaConnectionError(
-                f'Cannot connect to {self._ip}:{_PORT} '
-                f'(device offline or port closed)'
-            )
-
-    def _send(self, client: ModbusTcpClient, channel: int, state: bool) -> None:
-        """Write the coil and validate the Modbus response."""
-        try:
-            result = client.write_coil(channel, state, device_id=self._unit_id)
-        except ConnectionException as exc:
-            raise MoxaConnectionError(
-                f'Connection to {self._ip} lost during write: {exc}'
-            ) from exc
-        except ModbusException as exc:
-            raise MoxaError(
-                f'Modbus protocol error on {self._ip}: {exc}'
-            ) from exc
+            with socket.create_connection(
+                (self._ip, _PORT), timeout=self._timeout
+            ) as s:
+                s.sendall(req)
+                resp = _recvall(s, 12)
+        except MoxaError:
+            raise
         except OSError as exc:
-            raise MoxaError(
-                f'OS error communicating with {self._ip}: {exc}'
+            raise MoxaConnectionError(
+                f'Cannot communicate with {self._ip}:{_PORT}: {exc}'
             ) from exc
 
-        if result is None or result.isError():
-            raise MoxaResponseError(
-                f'Device {self._ip} refused write to DO{channel}: {result}'
-            )
+        _check_response(resp, self._ip, channel)
+
+
+# ── Module helpers ────────────────────────────────────────────────────────────
+
+def _recvall(s: socket.socket, n: int) -> bytes:
+    """Read exactly n bytes from s; raise MoxaConnectionError on early EOF."""
+    buf = b''
+    while len(buf) < n:
+        chunk = s.recv(n - len(buf))
+        if not chunk:
+            raise MoxaConnectionError('Connection closed by device during response')
+        buf += chunk
+    return buf
+
+
+def _check_response(resp: bytes, ip: str, channel: int) -> None:
+    """Validate the FC-05 echo response."""
+    fc = resp[7]
+    if fc & 0x80:
+        ex_code = resp[8] if len(resp) > 8 else '?'
+        raise MoxaResponseError(
+            f'Device {ip} returned Modbus exception FC={fc:#04x} code={ex_code}'
+        )
+    if fc != 0x05:
+        raise MoxaResponseError(
+            f'Device {ip} returned unexpected function code {fc:#04x}'
+        )
 
 
 # ── Module-level convenience function ─────────────────────────────────────────
@@ -189,13 +187,7 @@ def set_output(
     Example::
 
         from core.moxa import set_output
-        set_output('192.168.1.20', 0, True)   # energise DO0
-        set_output('192.168.1.20', 3, False)  # de-energise DO3
-
-    Raises:
-        MoxaChannelError    — channel outside 0–7
-        MoxaConnectionError — device unreachable
-        MoxaResponseError   — device refused the write
-        MoxaError           — other I/O error
+        set_output('192.168.1.101', 0, True)   # energise DO0
+        set_output('192.168.1.101', 3, False)  # de-energise DO3
     """
     MoxaClient(ip, timeout=timeout, unit_id=unit_id).set_output(channel, state)
