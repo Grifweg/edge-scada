@@ -155,6 +155,7 @@ class Engine:
         self._fsm      : _InternetFSM = _InternetFSM()
         self._alarms   : AlarmManager = AlarmManager()
         self._watchdog                = None   # set via set_watchdog()
+        self._moxa    : MoxaClient | None = None   # persistent; recreated if IP changes
 
         self._q    : queue.SimpleQueue[_Msg] = queue.SimpleQueue()
         self._halt : threading.Event         = threading.Event()
@@ -314,10 +315,18 @@ class Engine:
             plc_ok = False
 
         try:
-            MoxaClient(cfg['moxa_ip']).set_output(cfg['moxa_channel'], alarm)
+            moxa_ip = cfg['moxa_ip']
+            if self._moxa is None or self._moxa._ip != moxa_ip:
+                if self._moxa is not None:
+                    self._moxa.close()
+                self._moxa = MoxaClient(moxa_ip)
+            self._moxa.set_output(cfg['moxa_channel'], alarm)
             moxa_ok = True
         except MoxaError as exc:
             log.error('Moxa: %s', exc)
+            if self._moxa is not None:
+                self._moxa.close()
+                self._moxa = None
             moxa_ok = False
 
         with self._lock:
