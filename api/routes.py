@@ -310,23 +310,6 @@ def create_app(
         engine.sync()
         return jsonify({'ok': True})
 
-    @app.route('/api/silence-alarm', methods=['POST'])
-    @login_required
-    def api_silence_alarm():
-        """Write 1 to the configured PLC ack bit — operator silences the alarm."""
-        from core.plc import FINSClient, FINSError
-        ack_bit  = store.get('moxa_pulse_ack_bit', '')
-        plc_ip   = store.get('plc_ip', '')
-        if not ack_bit or not plc_ip:
-            return jsonify({'error': 'moxa_pulse_ack_bit or plc_ip not configured'}), 400
-        try:
-            FINSClient(plc_ip, timeout=2.0).write_bit(ack_bit, True)
-        except FINSError as exc:
-            return jsonify({'error': str(exc)}), 502
-        _audit.log(current_user.username, 'ALARM_SILENCED', None, ack_bit)
-        engine.sync()
-        return jsonify({'ok': True})
-
     # ── API — new endpoints ───────────────────────────────────────────────────
 
     @app.route('/api/heartbeat')

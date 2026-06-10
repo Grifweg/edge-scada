@@ -125,17 +125,6 @@ function _renderAlarmTile(d) {
     active ? (silenced ? 'warn' : 'fail') : 'ok',
     active && !silenced, active && !silenced);
 
-  // Show / hide silence panel
-  const panel      = document.getElementById('silence-panel');
-  const unacked    = document.getElementById('silence-unacked');
-  const acked      = document.getElementById('silence-acked');
-  if (panel) {
-    panel.classList.toggle('hidden', !active);
-    if (active) {
-      unacked.classList.toggle('hidden',  silenced);
-      acked.classList.toggle('hidden',   !silenced);
-    }
-  }
 }
 
 function _renderHwTile(name, ok, ipSub, protocolSub) {
@@ -352,29 +341,6 @@ async function saveConfig(e) {
 function _cfgStatus(el, text, cls) {
   el.textContent = text;
   el.className   = 'cfg-msg' + (cls ? ' ' + cls : '');
-}
-
-async function silenceAlarm() {
-  const btn = document.getElementById('btn-silence');
-  if (!btn) return;
-  btn.disabled    = true;
-  btn.textContent = '...';
-  try {
-    const r = await _apiFetch('/api/silence-alarm', {
-      method:  'POST',
-      headers: { 'X-CSRFToken': _csrf },
-    });
-    if (!r) return;
-    if (r.ok) {
-      poll();
-    } else {
-      btn.disabled    = false;
-      btn.textContent = '⚠ FOUT — PROBEER OPNIEUW';
-    }
-  } catch (_) {
-    btn.disabled    = false;
-    btn.textContent = '⚠ FOUT — PROBEER OPNIEUW';
-  }
 }
 
 // ── Utilities ────────────────────────────────────────────────────────────────
