@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+env/
+
+# Runtime config — site-specific, created automatically on first boot
+config/config.json
+
+# Runtime data — generated at runtime, not for version control
+data/*.json
+data/*.jsonl
+data/.secret_key
+
+# Keep the empty data directory in git
+!data/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db

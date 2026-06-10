@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  scada:
+    build: .
+    image: edge-scada:latest
+    container_name: edge-scada
+    restart: unless-stopped
+    network_mode: host        # Pi talks directly on LAN — no NAT, no port mapping needed
+    cap_add:
+      - NET_RAW               # required for unprivileged ping inside the container
+    volumes:
+      - ./config:/app/config  # persists config.json across rebuilds
+      - ./data:/app/data      # persists alarms.jsonl
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=Europe/Amsterdam   # adjust to your site timezone
+      - SECRET_KEY=change-this-to-a-random-secret-in-production
+      # - SESSION_TIMEOUT=3600   # inactivity timeout in seconds (default: 3600)
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Edge SCADA — Login</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-body">
+
+  <div class="login-wrap">
+
+    <!-- Logo placeholder -->
+    <div class="login-logo">
+      <svg width="52" height="52" viewBox="0 0 52 52" fill="none">
+        <rect width="52" height="52" fill="#0b0b0b" stroke="#252525"/>
+        <polygon points="26,8 44,40 8,40" stroke="#1e88e5" stroke-width="1.5" fill="none"/>
+        <circle cx="26" cy="26" r="5" fill="#1e88e5"/>
+        <line x1="26" y1="21" x2="26" y2="16" stroke="#1e88e5" stroke-width="1.5"/>
+      </svg>
+    </div>
+
+    <div class="login-brand">EDGE SCADA</div>
+    <div class="login-sub">INTERNET ALARM MONITOR</div>
+
+    {% if error %}
+    <div class="login-error">{{ error }}</div>
+    {% endif %}
+
+    <form class="login-form" method="POST" action="/login">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <label class="cfg-lbl" for="lf-user">USERNAME</label>
+      <input class="cfg-inp login-inp" id="lf-user" name="username"
+             type="text" autocomplete="username" spellcheck="false" required autofocus>
+
+      <label class="cfg-lbl login-lbl-pw" for="lf-pass">PASSWORD</label>
+      <input class="cfg-inp login-inp" id="lf-pass" name="password"
+             type="password" autocomplete="current-password" required>
+
+      <div class="login-remember">
+        <input type="checkbox" id="lf-rem" name="remember">
+        <label for="lf-rem">REMEMBER ME</label>
+      </div>
+
+      <button class="login-btn" type="submit">LOG IN</button>
+    </form>
+
+  </div>
+
+</body>
+</html>

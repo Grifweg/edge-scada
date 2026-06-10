@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>Edge SCADA — Internet Alarm Monitor</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <!-- Full-width COMMS LOST banner (hidden until server stops responding) -->
+  <div id="comms-banner" class="comms-banner hidden">
+    &#9888; COMMS LOST &mdash; server not responding
+  </div>
+
+  <!-- Top bar -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="hb-dot" id="hb-dot" title="Server heartbeat"></span>
+      <span class="brand">EDGE SCADA</span>
+      <span class="brand-sep">|</span>
+      <span class="brand-sub">INTERNET ALARM MONITOR</span>
+    </div>
+    <div class="topbar-right">
+      <span class="user-info">
+        <span class="user-chip">{{ current_user.username.upper() }}</span>
+        <span class="user-role-chip role-{{ current_user.role }}">{{ current_user.role[:3].upper() }}</span>
+      </span>
+      <span id="uptime-display" class="uptime-display">—</span>
+      <span id="wall-clock" class="wall-clock">00:00:00</span>
+      <span id="poll-age"   class="poll-age">—</span>
+      {% if current_user.is_admin %}
+      <a class="logout-btn" href="/users">USERS</a>
+      {% endif %}
+      <a class="logout-btn" href="/logout">LOGOUT</a>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- ── Status tiles ── -->
+    <section class="tile-row">
+
+      <div class="tile" id="tile-inet" title="Live internet reachability check">
+        <div class="tile-hdr">
+          <span class="led" id="led-inet"></span>
+          <span class="tile-label">INTERNET</span>
+        </div>
+        <div class="tile-val" id="val-inet">—</div>
+        <div class="tile-sub" id="sub-inet">INITIALISING</div>
+      </div>
+
+      <div class="tile" id="tile-alarm" title="Effective alarm output state">
+        <div class="tile-hdr">
+          <span class="led" id="led-alarm"></span>
+          <span class="tile-label">ALARM OUTPUT</span>
+        </div>
+        <div class="tile-val" id="val-alarm">—</div>
+        <div class="tile-sub" id="sub-alarm">W100.00 &bull; DO</div>
+      </div>
+
+      <div class="tile" id="tile-plc" title="Last FINS/TCP write result — Omron CJ2M">
+        <div class="tile-hdr">
+          <span class="led" id="led-plc"></span>
+          <span class="tile-label">PLC WRITE</span>
+        </div>
+        <div class="tile-val" id="val-plc">—</div>
+        <div class="tile-sub" id="sub-plc">FINS TCP</div>
+      </div>
+
+      <div class="tile" id="tile-moxa" title="Last Modbus TCP write result — Moxa ioLogik">
+        <div class="tile-hdr">
+          <span class="led" id="led-moxa"></span>
+          <span class="tile-label">MOXA OUTPUT</span>
+        </div>
+        <div class="tile-val" id="val-moxa">—</div>
+        <div class="tile-sub" id="sub-moxa">MODBUS TCP</div>
+      </div>
+
+    </section>
+
+    <!-- ── Controls row ── -->
+    <section class="ctrl-row">
+
+      <!-- Override panel -->
+      <div class="panel" id="panel-override">
+        <div class="panel-title">MANUAL OVERRIDE</div>
+        <span class="mode-badge" id="mode-badge">AUTO</span>
+
+        {% if current_user.is_engineer %}
+        <div class="ovr-group">
+          <button id="btn-auto"      class="ovr-btn" type="button" onclick="setOverride(null)">
+            <span class="ovr-icon">&#9654;</span> AUTO
+          </button>
+          <button id="btn-force-on"  class="ovr-btn ovr-on"  type="button" onclick="setOverride(true)">
+            <span class="ovr-icon">&#9650;</span> FORCE ON
+          </button>
+          <button id="btn-force-off" class="ovr-btn ovr-off" type="button" onclick="setOverride(false)">
+            <span class="ovr-icon">&#9660;</span> FORCE OFF
+          </button>
+        </div>
+        {% else %}
+        <div class="ovr-group">
+          <span class="role-notice">READ-ONLY &mdash; {{ current_user.role.upper() }}</span>
+        </div>
+        {% endif %}
+
+        <p class="ovr-desc" id="ovr-desc">
+          Alarm output follows internet connectivity automatically.
+        </p>
+      </div>
+
+      <!-- Configuration panel -->
+      <div class="panel" id="panel-cfg">
+        <div class="panel-title">CONFIGURATION</div>
+        <form id="cfg-form" onsubmit="saveConfig(event)" autocomplete="off" novalidate>
+
+          <div class="cfg-row">
+            <label class="cfg-lbl" for="cfg-plc-ip">PLC IP ADDRESS</label>
+            <input  class="cfg-inp" id="cfg-plc-ip"  type="text"
+                    spellcheck="false" placeholder="192.168.1.10"
+                    {% if not current_user.is_engineer %}readonly{% endif %}>
+          </div>
+
+          <div class="cfg-row">
+            <label class="cfg-lbl" for="cfg-plc-bit">PLC ALARM BIT ADDRESS</label>
+            <input  class="cfg-inp" id="cfg-plc-bit" type="text"
+                    spellcheck="false" placeholder="W100.00"
+                    {% if not current_user.is_engineer %}readonly{% endif %}>
+          </div>
+
+          <div class="cfg-row">
+            <label class="cfg-lbl" for="cfg-moxa-ip">MOXA IP ADDRESS</label>
+            <input  class="cfg-inp" id="cfg-moxa-ip" type="text"
+                    spellcheck="false" placeholder="192.168.1.20"
+                    {% if not current_user.is_engineer %}readonly{% endif %}>
+          </div>
+
+          <div class="cfg-row">
+            <label class="cfg-lbl">MOXA OUTPUT CHANNEL</label>
+            <div class="ch-seg" id="ch-seg" role="group" aria-label="Channel 0 to 7"></div>
+          </div>
+
+          {% if current_user.is_engineer %}
+          <div class="cfg-foot">
+            <button class="apply-btn" type="submit">APPLY</button>
+            <span class="cfg-msg" id="cfg-msg"></span>
+          </div>
+          {% else %}
+          <div class="cfg-foot">
+            <span class="role-notice">READ-ONLY &mdash; {{ current_user.role.upper() }}</span>
+          </div>
+          {% endif %}
+
+        </form>
+      </div>
+
+    </section>
+
+    <!-- ── System health ── -->
+    <section class="panel health-section">
+      <div class="panel-title">SYSTEM HEALTH</div>
+      <div class="health-grid">
+        <div class="health-item" id="h-flask">
+          <span class="led ok"></span>
+          <span class="health-label">FLASK</span>
+        </div>
+        <div class="health-item" id="h-engine">
+          <span class="led"></span>
+          <span class="health-label">ENGINE</span>
+        </div>
+        <div class="health-item" id="h-watchdog">
+          <span class="led"></span>
+          <span class="health-label">WATCHDOG</span>
+        </div>
+        <div class="health-item" id="h-plc">
+          <span class="led"></span>
+          <span class="health-label">PLC</span>
+        </div>
+        <div class="health-item" id="h-moxa">
+          <span class="led"></span>
+          <span class="health-label">MOXA</span>
+        </div>
+        <div class="health-item" id="h-internet">
+          <span class="led"></span>
+          <span class="health-label">INTERNET</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Alarm log ── -->
+    <section class="panel alarm-panel">
+      <div class="alarm-hdr">
+        <span class="panel-title">ALARM LOG</span>
+        <span class="alarm-count" id="alarm-count">0 EVENTS</span>
+      </div>
+      <div class="alarm-scroll">
+        <table class="alarm-tbl">
+          <thead>
+            <tr>
+              <th>TIMESTAMP</th>
+              <th>EVENT</th>
+              <th>STATE</th>
+              <th>REASON</th>
+            </tr>
+          </thead>
+          <tbody id="alarm-body">
+            <tr>
+              <td colspan="4" class="alarm-empty">No events recorded.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

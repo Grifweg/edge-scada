@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Edge SCADA — User Management</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="brand">EDGE SCADA</span>
+      <span class="brand-sep">|</span>
+      <span class="brand-sub">USER MANAGEMENT</span>
+    </div>
+    <div class="topbar-right">
+      <span class="user-info">
+        <span class="user-chip">{{ current_user.username.upper() }}</span>
+        <span class="user-role-chip role-{{ current_user.role }}">{{ current_user.role[:3].upper() }}</span>
+      </span>
+      <a class="logout-btn" href="/logout">LOGOUT</a>
+      <a class="logout-btn" href="/" style="margin-left:0">&larr; DASHBOARD</a>
+    </div>
+  </header>
+
+  <main>
+
+    {% with msgs = get_flashed_messages(with_categories=true) %}
+    {% if msgs %}
+    {% for cat, msg in msgs %}
+    <div class="flash-msg flash-{{ cat }}">{{ msg }}</div>
+    {% endfor %}
+    {% endif %}
+    {% endwith %}
+
+    <!-- Current users -->
+    <section class="panel" style="margin-bottom:10px">
+      <div class="panel-title">REGISTERED USERS</div>
+      <div class="alarm-scroll">
+        <table class="alarm-tbl users-tbl">
+          <thead>
+            <tr>
+              <th>USERNAME</th>
+              <th>ROLE</th>
+              <th>MUST CHANGE PW</th>
+              <th>ACTION</th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for uname, udata in users.items() %}
+            <tr>
+              <td>{{ uname }}</td>
+              <td><span class="role-badge role-{{ udata.role }}">{{ udata.role.upper() }}</span></td>
+              <td>{{ 'YES' if udata.must_change_password else '—' }}</td>
+              <td>
+                {% if uname != 'admin' %}
+                <form method="POST" action="/users/delete"
+                      onsubmit="return confirm('Delete user {{ uname }}?')">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                  <input type="hidden" name="username" value="{{ uname }}">
+                  <button class="del-btn" type="submit">DELETE</button>
+                </form>
+                {% else %}
+                <span class="cfg-lbl">PROTECTED</span>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Create user -->
+    <section class="panel">
+      <div class="panel-title">CREATE USER</div>
+      <form method="POST" action="/users/create" autocomplete="off" novalidate>
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <div class="ctrl-row" style="margin-bottom:0">
+          <div>
+            <div class="cfg-row">
+              <label class="cfg-lbl" for="cu-user">USERNAME</label>
+              <input class="cfg-inp" id="cu-user" name="username"
+                     type="text" spellcheck="false" required>
+            </div>
+            <div class="cfg-row">
+              <label class="cfg-lbl" for="cu-pass">INITIAL PASSWORD</label>
+              <input class="cfg-inp" id="cu-pass" name="password"
+                     type="password" required>
+            </div>
+          </div>
+          <div>
+            <div class="cfg-row">
+              <label class="cfg-lbl">ROLE</label>
+              <div class="ch-seg" style="margin-top:0">
+                <label class="ch-btn role-sel">
+                  <input type="radio" name="role" value="operator" checked hidden>OPERATOR
+                </label>
+                <label class="ch-btn role-sel">
+                  <input type="radio" name="role" value="engineer" hidden>ENGINEER
+                </label>
+                <label class="ch-btn role-sel">
+                  <input type="radio" name="role" value="administrator" hidden>ADMIN
+                </label>
+              </div>
+            </div>
+            <div class="cfg-foot" style="margin-top:22px">
+              <button class="apply-btn" type="submit">CREATE USER</button>
+            </div>
+          </div>
+        </div>
+
+      </form>
+    </section>
+
+  </main>
+
+  <script>
+    // Highlight selected role radio as active ch-btn
+    document.querySelectorAll('.role-sel').forEach(lbl => {
+      const inp = lbl.querySelector('input');
+      if (inp.checked) lbl.classList.add('active');
+      inp.addEventListener('change', () => {
+        document.querySelectorAll('.role-sel').forEach(l => l.classList.remove('active'));
+        lbl.classList.add('active');
+      });
+    });
+  </script>
+
+</body>
+</html>
